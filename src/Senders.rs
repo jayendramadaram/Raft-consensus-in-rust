@@ -1,5 +1,8 @@
 use std::io::Read;
+use serde::Serialize;
 use serde_json::Value;
+use serde_json::{json};
+use reqwest::{Client, Error, Response};
 
 #[derive(Clone, Debug)]
 pub struct LogEntry {
@@ -9,6 +12,14 @@ pub struct LogEntry {
 
 pub struct Vm {
     vals : [u32 ; 4]
+}
+#[derive(Deserialize)]
+struct Ip {
+    origin: String,
+}
+#[derive(Debug, Deserialize)]
+ struct askVoteResp {
+    data : String
 }
 
 pub struct state {
@@ -24,17 +35,25 @@ pub struct state {
 
 }
 
+#[derive(Debug, Serialize)]
+struct  askPayload {
+    term : u32,
+    candidateId : u32,
+    lastLogIndex : usize,
+    lastLogTerm : u32
+}
+
 impl  state {
     pub fn new(id : u32) -> Self {
-        state { 
-            id, 
-            currentterm: 0, 
-            voted_for: None, 
-            log: Vec::new(), 
-            commit_index: 0, 
-            last_applied: 0, 
-            next_index: vec![usize ; 5], 
-            match_index: []
+        state {
+            id,
+            currentterm: 0,
+            voted_for: None,
+            log: Vec::new(),
+            commit_index: 0,
+            last_applied: 0,
+            next_index: vec![0; 5],
+            match_index: vec![0; 5],
         }
     }
     
@@ -95,7 +114,31 @@ impl  state {
 
     }
 
-    pub fn askvotes(&mut self) -> (u32, bool) {
+    pub async fn askvotes(&mut self) -> (u32, bool) {
+        let client = Client::new();
+
+        for i in 0..=4 {
+            let url = format!("http://localhost:800{}/askvotes" , i);
+            
+            let payload = askPayload {
+                term : self.currentterm,
+                candidateId : self.id,
+                lastLogIndex : self.log.len() - 1,
+                lastLogTerm : self.log[&self.log.len() - 1].term,
+            };
+            let payload_json = serde_json::to_string(&payload).unwrap();
+            let response = client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .body(payload_json)
+            .send().await.unwrap();
+            print!("{:?}" , response)
+            // let out = response.json::<Ip>().await.unwrap();
+    
+    
+            
+                   
+        }
         
         for i in 1..=4  {
             println!(

@@ -93,7 +93,9 @@ fn main() {
             let mut value = timer_value_clone.lock().unwrap();
             *value -= 1;
             if *value == 0 {
-
+                println!("Requested for Leader");
+                Node.askvotes();
+                *value == 5;
             }
             println!("Timer value: {}", *value);
         }
@@ -105,13 +107,13 @@ fn main() {
 
         let stream = stream.unwrap();
         thread::spawn(move || {
-            handle_connection(stream , &timer_value_clone);
+            handle_connection(stream , &timer_value_clone , Node);
         });
     }
 }
 
 // Handle a connection
-fn handle_connection(mut stream: std::net::TcpStream , timer_value: &Arc<Mutex<u16>>) {
+fn handle_connection(mut stream: std::net::TcpStream , timer_value: &Arc<Mutex<u16>> , Node :my_lib::state) {
     let mut rng = rand::thread_rng();
 
     // Read the request
@@ -145,6 +147,9 @@ fn handle_connection(mut stream: std::net::TcpStream , timer_value: &Arc<Mutex<u
             stream.write(response.as_bytes()).unwrap();
             stream.flush().unwrap();
             
+        }
+        ("POST", "/askvotes") => {
+            // Node.grantVote(term, candidateId, lastLogIndex, lastLogTerm)
         }
         ("GET", "/accept") => {
             let mut value = timer_value.lock().unwrap();
