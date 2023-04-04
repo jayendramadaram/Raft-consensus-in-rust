@@ -6,6 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+byteorder = "1.4.3"
+sha256 = "1.1.2"
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+rand = "0.8.4"
+reqwest = "0.11"
+
 
 
 [lib]
@@ -16,4 +23,4 @@ name = "my_executable"
 path = "src/main.rs"
 
 [workspace]
-members = ["src/Helpers.rs"]
+members = ["src/Helpers.rs" , "src/Senders.rs"]
