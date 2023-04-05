@@ -1,187 +1,118 @@
-use std::env;
-use std::fs::File;
-use std::io::prelude::*;
-use std::net::TcpListener;
-use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::io::{Read, Write};
-use std::net::{ TcpStream};
+use actix_web::{App, HttpResponse, HttpServer, Responder, web};
+use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use my_lib::*;
-use std::time::{Duration, Instant};
+use std::thread;
+use std::time::Duration;
 
-extern crate serde_json;
-use serde::{Serialize , Deserialize};
-use rand::Rng;
-// use serde::Serialize;
-
-// Define a struct to hold the JSON data
 #[derive(Serialize, Deserialize)]
-struct Member {
-    id: i32,
-    port: i32,
+struct AppendEntryStruct {
+    term: u32,
+    leader_id: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Members {
-    members: Vec<Member>,
+struct AskPayload {
+    term: u32,
+    candidate_id: u32,
 }
 
-fn main() {
+#[derive(Serialize, Deserialize)]
+struct ExecutePayload {
+    command: String,
+    args: Vec<u32>,
+}
 
-    let mut rng = rand::thread_rng();
-    // Parse the command-line argument
-    let args: Vec<String> = env::args().collect();
-    println!("{:?}" , args);
-    if args.len() != 2 {
-        println!("Usage: {} <id>", args[0]);
-        return;
-    }
-    let id: i32 = match args[1].parse() {
-        Ok(n) => n,
-        Err(_) => {
-            println!("Invalid id");
-            return;
-        }
-    };
+async fn append_entries(
+    data: web::Json<AppendEntryStruct>,
+    countdown_timer: web::Data<Arc<CountdownTimer>>,
+) -> impl Responder {
+    // Reset the countdown timer when appendentries route is called
+    countdown_timer.reset();
+    HttpResponse::Ok().body(format!(
+        "Term: {}, Leader ID: {:?}",
+        data.term, data.leader_id
+    ))
+}
 
-    // Read the JSON file
-    let mut file = match File::open("assets/playerConfig.json") {
-        Ok(file) => file,
-        Err(_) => {
-            println!("Error opening members.json");
-            return;
-        }
-    };
-    let mut contents = String::new();
-    if let Err(_) = file.read_to_string(&mut contents) {
-        println!("Error reading members.json");
-        return;
-    }
+async fn request_vote(
+    data: web::Json<AskPayload>,
+    countdown_timer: web::Data<Arc<CountdownTimer>>,
+) -> impl Responder {
+    HttpResponse::Ok().body(format!(
+        "Term: {}, Candidate ID: {}",
+        data.term, data.candidate_id
+    ))
+}
 
-    // Parse the JSON data
-    let members: Members = match serde_json::from_str(&contents) {
-        Ok(data) => data,
-        Err(_) => {
-            println!("Error parsing members.json");
-            return;
-        }
-    };
+async fn execute(
+    data: web::Json<ExecutePayload>,
+    countdown_timer: web::Data<Arc<CountdownTimer>>,
+) -> impl Responder {
+    HttpResponse::Ok().body(format!("Command: {}, Args: {:?}", data.command, data.args))
+}
 
-    // Find the member with the matching ID
-    let mut Node = my_lib::state::new(id.try_into().unwrap());
+struct CountdownTimer {
+    timer: Option<thread::JoinHandle<()>>,
+    stopped: Arc<AtomicBool>,
+    countdown: Arc<Mutex<u32>>,
+}
 
-    let member = members.members.iter().find(|m| m.id == id);
-    let port = match member {
-        Some(m) => m.port,
-        None => {
-            println!("Member not found for id={}", id);
-            return;
-        }
-    };
+impl CountdownTimer {
+    fn new() -> Self {
+        let stopped = Arc::new(AtomicBool::new(false));
+        let countdown = Arc::new(Mutex::new(15));
+        let stopped_clone = stopped.clone();
+        let countdown_clone = countdown.clone();
 
-    let timer_value: Arc<Mutex<u16>> = Arc::new(Mutex::new(rng.gen_range(20..=30)));
+        // Start a new thread for the countdown timer
+        let timer = Some(thread::spawn(move || {
+            loop {
+                let stopped = stopped_clone.load(Ordering::SeqCst);
+                if stopped {
+                    break;
+                }
 
-    // Start the webserver
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).unwrap();
-    println!("Server started on port {}", port);
+                let mut countdown = countdown_clone.lock().unwrap();
+                println!("{}", *countdown);
+                *countdown -= 1;
 
-    let timer_value_clone = timer_value.clone();
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_secs(1));
-            let mut value = timer_value_clone.lock().unwrap();
-            *value -= 1;
-            if *value == 0 {
-                println!("Requested for Leader");
-                Node.askvotes();
-                *value == 5;
+                // Reset the countdown timer when it reaches 0
+                if *countdown == 0 {
+                    *countdown = 15;
+                }
+
+                thread::sleep(Duration::from_secs(1));
             }
-            println!("Timer value: {}", *value);
-        }
-    });
+        }));
 
-
-    for stream in listener.incoming() {
-        let timer_value_clone = timer_value.clone();
-
-        let stream = stream.unwrap();
-        thread::spawn(move || {
-            handle_connection(stream , &timer_value_clone , Node);
-        });
-    }
-}
-
-// Handle a connection
-fn handle_connection(mut stream: std::net::TcpStream , timer_value: &Arc<Mutex<u16>> , Node :my_lib::state) {
-    let mut rng = rand::thread_rng();
-
-    // Read the request
-    let mut buffer = [0; 1024];
-    stream.read(&mut buffer).unwrap();
-
-    // Parse the request
-    let request = String::from_utf8_lossy(&buffer[..]);
-    let lines: Vec<&str> = request.split("\r\n").collect();
-    let tokens: Vec<&str> = lines[0].split(" ").collect();
-    let method = tokens[0];
-    let path = tokens[1];
-
-    // Dispatch the request
-    match (method, path) {
-        ("GET", "/foo") => {
-            let response = "HTTP/1.1 200 OK\r\n\r\nFoo!";
-            stream.write(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
-        }
-        ("GET", "/bar") => {
-            let response = "HTTP/1.1 200 OK\r\n\r\nBar!";
-            stream.write(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
-        }
-        ("GET", "/time") => {
-            let now = SystemTime::now();
-            let since_epoch = now.duration_since(UNIX_EPOCH).unwrap();
-            // let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", since_epoch
-            let response = format!("HTTP/1.1 200 OK\r\n\r\n{}", since_epoch.as_secs());
-            stream.write(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
-            
-        }
-        ("POST", "/askvotes") => {
-            // Node.grantVote(term, candidateId, lastLogIndex, lastLogTerm)
-        }
-        ("GET", "/accept") => {
-            let mut value = timer_value.lock().unwrap();
-            let newTime = rng.gen_range(20..=30);
-            println!("New time alloted {}" , newTime.clone());
-            *value = newTime;
-            let response = "HTTP/1.1 200 OK\r\n\r\nTimer reset";
-            stream.write(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
-        }
-        (_, _) => {
-            let response = "HTTP/1.1 404 NOT FOUND\r\n\r\n404 Not Found";
-            stream.write(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
+        CountdownTimer {
+            timer,
+            stopped,
+            countdown,
         }
     }
+
+    fn reset(&self) {
+        *self.countdown.lock().unwrap() = 15;
+    }
+
+   
 }
 
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    let countdown_timer = web::Data::new(Arc::new(CountdownTimer::new()));
 
-
-
-
-
-
-// fn main() {
-//     let mut prev_hash: String = "0x0000000000000".to_string();
-//     for i in 0..=10 {
-//         let currTime = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis();
-//         let mut block1 = my_lib::Block::new(i ,  "0x00000000000".to_owned(), prev_hash.to_owned() , currTime , format!("msg of id {}", i).to_owned());
-//         block1.hash = block1.hash();
-//         prev_hash = block1.hash.to_string();
-
-//     }
-//     // print!("{:?}" , SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis())
-// }
+    HttpServer::new(move || {
+        App::new()
+            .app_data(countdown_timer.clone())
+            .route("/appendentries", web::post().to(append_entries))
+            .route("/requestvote", web::post().to(request_vote))
+            .route("/execute", web::post().to(execute))
+            .default_service(web::get().to(|| HttpResponse::NotFound()))
+    })
+    .bind("127.0.0.1:8000")?
+    .run()
+    .await
+}

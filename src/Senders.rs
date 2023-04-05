@@ -1,5 +1,5 @@
 use std::io::Read;
-use serde::Serialize;
+use serde::{Serialize , Deserialize};
 use serde_json::Value;
 use serde_json::{json};
 use reqwest::{Client, Error, Response};
