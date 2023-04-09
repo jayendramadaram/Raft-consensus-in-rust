@@ -3,6 +3,10 @@ use serde::{Serialize , Deserialize};
 use serde_json::Value;
 use serde_json::{json};
 use reqwest::{Client, Error, Response, Body};
+use tokio::time::{self,timeout, Duration};
+// use tokio::time::{
+use async_recursion::async_recursion;
+
 // use serde::Serialize;
 // use reqwest::Client;
 
@@ -28,8 +32,8 @@ pub struct state {
     pub log: Vec<LogEntry>,
     pub commit_index: u64,
     pub last_applied: u64,
-    pub next_index : Vec<usize>,
-    pub match_index: Vec<u64>,
+    pub next_index : Vec<usize>, // need to update after eveery AE
+    pub match_index: Vec<u64>, // need to update after eveery AE
     pub vals : [i32 ; 4]
 
 }
@@ -40,12 +44,13 @@ pub struct sendEntries {
     pub prevLogIndex : usize,
     pub prevLogTerm : u32,
     pub entries : Vec<LogEntry>,
-    pub leaderCommit : u64
+    pub leaderCommit : u64,
+    pub vals : [i32 ; 4]
 }
 
 
 
-#[derive(Debug, Serialize , Deserialize)]
+#[derive(Debug, Serialize , Deserialize , Clone)]
 pub struct  askPayload {
     pub term : u32,
     pub candidateId : u32,
@@ -199,16 +204,19 @@ impl  state {
 
     // Regenerate
 
+    #[async_recursion]
+    
     pub async fn send_entries(&mut self , to :usize) -> (u64 , bool) {
         // println!("hereee");
         let prevlogterm = if self.log.len() > 0 {self.log[self.next_index[to]].term} else {0};
         let payload = sendEntries {
-            term : self.currentterm ,  
-            leaderId :  self.voted_for ,
-            prevLogIndex :  self.next_index[to] ,  
-            prevLogTerm : prevlogterm,
+            term : self.currentterm ,   // to verify term shouldnt not conflict 
+            leaderId :  self.voted_for , // Leader id shouldnt not conflict too
+            prevLogIndex :  self.next_index[to] ,  // this must be read and updated after every AE
+            prevLogTerm : prevlogterm, // 
             entries : self.log[self.next_index[to]..].to_vec(),
-            leaderCommit : self.commit_index
+            leaderCommit : self.commit_index,
+            vals : self.vals
         };
         let client = reqwest::Client::new();
             let resp_result = client
@@ -222,14 +230,22 @@ impl  state {
                                 let body_result = resp.text().await;
                                 match body_result {
                                     Ok(body) => {
-                                        // let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
-                                        // println!("{:?}" , response_data);
-                                       
+                                        let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
+                                        println!("Response AE {:?}" , response_data);
+                                       if !response_data.success {
+                                            self.next_index[to] -= 1;
+                                            return self.send_entries(to).await;
+                                       } else{
+                                            self.next_index[to] = if self.log.len() == 0 {0} else {self.log.len() - 1};
+                                            return (self.currentterm as u64 , true);
+                                       }
                                     },
                                     Err(e) => {},
                                 }
                             }
-                            Err(e) => {},
+                            Err(e) => {
+                                self.next_index[to] = 0;
+                            },
                         }
         
         // println!("Leaders Term {:?} \nLeaders Id {:?} \nprevLogIndex {} \nprevLogTerm {} \nEntries {:?} leaderCommit {}" , &self.currentterm ,  &self.voted_for , self.next_index[to] ,  self.log[self.next_index[to]].term,&self.log[self.next_index[to]..],&self.commit_index);
@@ -242,7 +258,7 @@ impl  state {
         //     return self.send_entries(to);
         // }
     
-        (1 , true)
+        (self.currentterm as u64, false)
     }
 
     pub async fn call_append(&mut self) -> bool {
@@ -263,17 +279,26 @@ impl  state {
         prevLogIndex : usize,
         prevLogTerm : u32,
         entries : Vec<LogEntry>,
-        leaderCommit : u64
+        leaderCommit : u64,
+        _vals : [i32 ; 4]
     ) -> (u32 , bool) {
+        // println!("1");
         let mut success = false;
         let mut current_term = self.currentterm;
-
+        
         if term < current_term {
+            // println!("2");
             return (current_term, success);
         }
         let mut entries_to_append: Vec<LogEntry> = vec![];
         if prevLogIndex == 0 {
             entries_to_append.extend_from_slice(&entries);
+            // self.log.truncate(prevLogIndex + 1);
+            self.log = entries_to_append;
+            self.vals = _vals;
+            self.commit_index = 0;
+            self.currentterm = term;
+            println!("{:?} {}", self.log.clone(), "LOGSSS after APPEND");
             return (self.currentterm, true);
         }
        
@@ -283,6 +308,9 @@ impl  state {
         }
         
         if !entries.is_empty() {
+            if self.log.len() == 0  {
+                return (self.currentterm, false);
+            }
             if self.log[prevLogIndex].term != entries[0].term {
                 return (self.currentterm, false);
             }
@@ -292,20 +320,18 @@ impl  state {
 
         self.log.truncate(prevLogIndex + 1);
         self.log.append(&mut entries_to_append);
+        self.vals = _vals;
         self.commit_index = std::cmp::min(leaderCommit, self.log.len() as u64 - 1);
         self.currentterm = term;
         success = true;
+        println!("{:?} {}", self.log.clone(), "LOGSSS after APPEND");
         (current_term, success)
 
     }
 
     pub async fn askvotes(&mut self) -> bool {
-        println!("we reached here");
-        let length = 0;
-        if &self.log.len() > &0 {
-            let length = &self.log.len() - 1;
-        }
-         let payload = askPayload {
+        let length = self.log.len().saturating_sub(1);
+        let payload = askPayload {
             term: self.currentterm,
             candidateId: self.id,
             lastLogIndex: length,
@@ -313,43 +339,45 @@ impl  state {
         };
         let mut totCount = 0;
         let mut total_positve = 0;
-        for player in  0..=4 {
+        let mut tasks = vec![];
+        for player in 0..=4 {
             if player == self.id {
                 continue;
             }
             let client = reqwest::Client::new();
-            let resp_result = client
-                        .post(format!("http://127.0.0.1:800{}/requestvotes" , player))
-                        .json(&payload)
-                        .send()
-                        .await;
-            
-                        match resp_result {
-                            Ok(resp) => {
-                                totCount += 1;
-                                let body_result = resp.text().await;
-                                match body_result {
-                                    Ok(body) => {
-                                        let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
-                                        println!("{:?}" , response_data);
-                                        if response_data.success {
-                                            total_positve += 1;
-                                        }
-                                    },
-                                    Err(e) => println!(""),
+            let payload_clone = payload.clone();
+            let task = async move {
+                let resp_result = timeout(Duration::from_secs(1), client
+                    .post(format!("http://127.0.0.1:800{}/requestvotes", player))
+                    .json(&payload_clone)
+                    .send()
+                ).await;
+                match resp_result {
+                    Ok(resp) => {
+                        totCount += 1;
+                        let body_result = resp.unwrap().text().await;
+                        match body_result {
+                            Ok(body) => {
+                                let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
+                                if response_data.success {
+                                    total_positve += 1;
                                 }
                             }
-                            Err(e) => println!(""),
+                            Err(e) => {}
                         }
+                    }
+                    Err(e) => {}
+                }
+            };
+            tasks.push(task);
         }
-        
-        if totCount == 0 || totCount/2 < total_positve {
+        futures::future::join_all(tasks).await;
+        if totCount == 0 || totCount / 2 <= total_positve {
             println!("Declaring myself as leader");
             self.voted_for = Some(self.id as u64);
             return true;
         }
         false
-    
     }
     
     pub fn grantVote(&mut self,term : u32,

@@ -36,16 +36,15 @@ async fn append_entries(
     stateobj: web::Data<Arc<Mutex<state>>>,
     // timer_value: web::Data<&Arc<RwLock<u16>>>,
 ) -> impl Responder {
-    println!("\n\n{:?}\n\n" , data);
     let mut locked_data = match stateobj.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let (term , success) = locked_data.recive_entries(data.term, data.leaderId, data.prevLogIndex, data.prevLogTerm, data.entries.clone(), data.leaderCommit);
+    let (term , success) = locked_data.recive_entries(data.term, data.leaderId, data.prevLogIndex, data.prevLogTerm, data.entries.clone(), data.leaderCommit , data.vals);
     // Reset the countdown timer when appendentries route is called
     let mut rng = rand::thread_rng();
     let mut value = TIMER_VALUE.write().unwrap();
-    *value = rng.gen_range(15..=25);
+    *value = rng.gen_range(15..=30);
     let response_data = askVoteResp {
         term: "some term".to_string(),
         success: success,
@@ -59,7 +58,7 @@ async fn request_vote(
 ) -> impl Responder {
     let mut rng = rand::thread_rng();
     let mut value = TIMER_VALUE.write().unwrap();
-    *value = rng.gen_range(15..=25);
+    *value = rng.gen_range(15..=30);
     HttpResponse::Ok().body(format!(
         "Term: {}, Candidate ID: {}",
         data.term, data.candidate_id
@@ -87,7 +86,7 @@ async fn requestvotes(
 
     let mut locked_data = stateobj.lock().unwrap();
     let (term , success) = locked_data.grantVote(data.term, data.candidateId, data.lastLogIndex, data.lastLogTerm);
-    println!("check {:?}" , success);
+    // println!("check {:?}" , success);
     let response_data = askVoteResp {
         term: "some term".to_string(),
         success: success,
@@ -99,7 +98,7 @@ async fn requestvotes(
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    println!("{:?}" , args);
+    // println!("{:?}" , args);
     if args.len() != 2 {
         println!("Usage: {} <id>", args[0]);
         return Ok(()); // <-- return a Result value here
@@ -124,19 +123,17 @@ async fn main() -> std::io::Result<()> {
                     let mut value = TIMER_VALUE.write().unwrap();
                     let mut locked_data = clone_state.lock().unwrap();
                     *value -= 1;
-
-            if *value == 0 {
-                
-                if locked_data.voted_for != None && locked_data.voted_for.unwrap() == locked_data.id as u64 {
-                    locked_data.call_append().await;
-                    println!("call append entries");
-                    *value = 5;
-                }
-                else if locked_data.askvotes().await {
-                    println!("Requested for Leader");
-                    *value = 5;
-                }
-            }
+                    if *value == 0 {
+                        if locked_data.voted_for != None && locked_data.voted_for.unwrap() == locked_data.id as u64 {
+                            locked_data.call_append().await;
+                            println!("call append entries");
+                            *value = 5;
+                        }
+                        else if locked_data.askvotes().await {
+                            // println!("Requested for Leader");
+                            *value = 5;
+                        }
+                    }
             println!("Timer value: {}", *value);
         }
     });
