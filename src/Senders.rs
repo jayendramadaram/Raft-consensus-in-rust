@@ -60,7 +60,7 @@ pub struct  askPayload {
 
 #[derive(Debug ,Deserialize , Serialize)]
 pub struct askVoteResp {
-    pub term : String,
+    pub term : u32,
     pub success : bool
 }
 
