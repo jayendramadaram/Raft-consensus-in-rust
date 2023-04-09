@@ -1,10 +1,11 @@
-use std::io::{Read, ErrorKind};
+use std::io::{Read, ErrorKind}; // IO Read and Error handling 
 use serde::{Serialize , Deserialize};
 use serde_json::Value;
 use serde_json::{json};
 use reqwest::{Client, Error, Response, Body};
 use tokio::time::{self,timeout, Duration};
-// use tokio::time::{
+
+// # macro attribute for calling async function recursively 
 use async_recursion::async_recursion;
 
 // use serde::Serialize;
@@ -21,9 +22,9 @@ pub struct LogEntry {
 struct Ip {
     origin: String,
 }
+
+// ultimate root state of project SLIM SHADY
 #[derive(Debug, Deserialize)]
-
-
 pub struct state {
     // persistent state
     pub id : u32,
@@ -231,7 +232,7 @@ impl  state {
                                 match body_result {
                                     Ok(body) => {
                                         let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
-                                        println!("Response AE {:?}" , response_data);
+                                        // println!("Response AE {:?}" , response_data);
                                        if !response_data.success {
                                             self.next_index[to] -= 1;
                                             return self.send_entries(to).await;
@@ -329,6 +330,7 @@ impl  state {
 
     }
 
+    // asynchronous call multiple servers for votes 
     pub async fn askvotes(&mut self) -> bool {
         let length = self.log.len().saturating_sub(1);
         let payload = askPayload {
@@ -380,6 +382,7 @@ impl  state {
         false
     }
     
+    // function to grant vote when a leader asks for a vote
     pub fn grantVote(&mut self,term : u32,
         candidateId : u32,
         lastLogIndex : usize,
@@ -389,12 +392,14 @@ impl  state {
         let mut success = false;
         let mut current_term = self.currentterm;
 
+        // validate term
         if term < current_term {
             return (current_term, success);
         }
 
         let last_log = self.log.last();
-
+    
+    // validate logs
     if last_log.is_none() {
         success = true;
     } else {

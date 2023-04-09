@@ -75,7 +75,7 @@ async fn execute(
     
     // call handle execute and return data 
     let respponse = locked_data.handle_exec(data.command.clone(), data.args.clone());
-    
+    // println!("{:?}" , locked_data);
     HttpResponse::Ok().body(format!("Command: {}", respponse))
 }
 
@@ -150,11 +150,11 @@ async fn main() -> std::io::Result<()> {
 
                     // unlock timer to decrement it and locked-data as well 
                     let mut value = TIMER_VALUE.write().unwrap();
+                    let mut locked_data = clone_state.lock().unwrap();
+                    // unlock state to call operation on it
                     *value -= 1;
                     if *value == 0 {
 
-                        // unlock state to call operation on it
-                        let mut locked_data = clone_state.lock().unwrap();
                         
                         // if i am already a leader i call append entries
                         if locked_data.voted_for != None && locked_data.voted_for.unwrap() == locked_data.id as u64 {
@@ -174,11 +174,13 @@ async fn main() -> std::io::Result<()> {
 
     });
 
+    // start a httpServer with actix in main Thread
+    // cargo run 1 starts server at http://localhost:800{1}
     HttpServer::new(move || {
         App::new()
+        // pass stateObj clone to Main thread 
         .app_data(web::Data::new(stateobj.clone()))
             .route("/appendentries", web::post().to(append_entries))
-            
             .route("/execute", web::post().to(execute))
             .route("/requestvotes", web::post().to(requestvotes))
             .default_service(web::get().to(|| HttpResponse::NotFound()))
