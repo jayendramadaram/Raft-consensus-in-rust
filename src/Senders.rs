@@ -11,6 +11,9 @@ use async_recursion::async_recursion;
 // use serde::Serialize;
 // use reqwest::Client;
 
+// l : 6 ✅
+
+
 #[derive(Clone, Debug ,Serialize, Deserialize)]
 pub struct LogEntry {
     term: u32,
@@ -84,7 +87,7 @@ impl  state {
     pub fn handle_exec(&mut self , command : String , args : Vec<i32>) -> String {
         let mut resp :String = String::new();
         let result = match command.as_str() {
-            "Set" => {
+            "set" => {
                 if args.len() >= 2 {
                     let first = args[0] as usize;
                     let second = args[1];
@@ -206,7 +209,6 @@ impl  state {
     // Regenerate
 
     #[async_recursion]
-    
     pub async fn send_entries(&mut self , to :usize) -> (u64 , bool) {
         // println!("hereee");
         let prevlogterm = if self.log.len() > 0 {self.log[self.next_index[to]].term} else {0};
@@ -220,34 +222,34 @@ impl  state {
             vals : self.vals
         };
         let client = reqwest::Client::new();
-            let resp_result = client
-                        .post(format!("http://127.0.0.1:800{}/appendentries" , to))
-                        .json(&payload)
-                        .send()
-                        .await;
-            
-                        match resp_result {
-                            Ok(resp) => {
-                                let body_result = resp.text().await;
-                                match body_result {
-                                    Ok(body) => {
-                                        let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
-                                        // println!("Response AE {:?}" , response_data);
-                                       if !response_data.success {
-                                            self.next_index[to] -= 1;
-                                            return self.send_entries(to).await;
-                                       } else{
-                                            self.next_index[to] = if self.log.len() == 0 {0} else {self.log.len() - 1};
-                                            return (self.currentterm as u64 , true);
-                                       }
-                                    },
-                                    Err(e) => {},
-                                }
+        let resp_result = client
+                    .post(format!("http://127.0.0.1:800{}/appendentries" , to))
+                    .json(&payload)
+                    .send()
+                    .await;
+        
+                    match resp_result {
+                        Ok(resp) => {
+                            let body_result = resp.text().await;
+                            match body_result {
+                                Ok(body) => {
+                                    let response_data: askVoteResp = serde_json::from_str(&body).unwrap();
+                                    // println!("Response AE {:?}" , response_data);
+                                    if !response_data.success {
+                                        self.next_index[to] -= 1;
+                                        return self.send_entries(to).await;
+                                    } else{
+                                        self.next_index[to] = if self.log.len() == 0 {0} else {self.log.len() - 1};
+                                        return (self.currentterm as u64 , true);
+                                    }
+                                },
+                                Err(e) => {},
                             }
-                            Err(e) => {
-                                self.next_index[to] = 0;
-                            },
                         }
+                        Err(e) => {
+                            self.next_index[to] = 0;
+                        },
+                    }
         
         // println!("Leaders Term {:?} \nLeaders Id {:?} \nprevLogIndex {} \nprevLogTerm {} \nEntries {:?} leaderCommit {}" , &self.currentterm ,  &self.voted_for , self.next_index[to] ,  self.log[self.next_index[to]].term,&self.log[self.next_index[to]..],&self.commit_index);
 

@@ -183,7 +183,9 @@ async fn main() -> std::io::Result<()> {
             .route("/appendentries", web::post().to(append_entries))
             .route("/execute", web::post().to(execute))
             .route("/requestvotes", web::post().to(requestvotes))
-            .default_service(web::get().to(|| HttpResponse::NotFound()))
+            .default_service(web::route().to(|| HttpResponse::NotFound()))
+            .route("/foo", web::get().to(|| HttpResponse::Ok().body("bar")))
+
     })
     .bind(format!("127.0.0.1:800{}" , id))?
     .run()
